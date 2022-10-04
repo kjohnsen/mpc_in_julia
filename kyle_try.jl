@@ -29,7 +29,10 @@ u0 = [
     U => zeros(1, 3)
 ]
 
-L = tr(sum(X'*Q*X + U'*R*U))
+L = begin
+    # tr(sum(X'*Q*X + U'*R*U))
+    sum((Q*X).*X) + sum((R*U).*U)
+end
 
 my_cons = X[:, 2:end] ~ A*X[:, 1:end-1] + B*U[:, 1:end-1]
 
