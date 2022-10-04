@@ -1,7 +1,6 @@
 using LinearAlgebra
 using Plots
-using Optimization
-using OptimizationBBO
+using Optimization, OptimizationOptimJL, Zygote, ForwardDiff
 
 #define system
 A = [1 -6.66e-13 -2.03e-9 -4.14e-6;
@@ -18,7 +17,7 @@ D = [0.0]
 
 #for getting firing rate Z - y[1] used as julia gives a vector for y during following processes by default
 function y_to_z(y)
-    return ℯ^(61.4*y[1] - 5.468);
+    return exp(61.4*y[1] - 5.468);
 end
 
 #creates referene trajectory of desired values for firing rate. Weight argument controls how smooth of a process this should be 
@@ -61,11 +60,12 @@ end
 #to calculate our expression to be minimized as a function of a control sequence U                  
 function J(C, y_to_z, reference, errors, u_penalty, control_horizon, prediction_horizon, optimization_states, u_current, error_weights, du_weights)
     #calculate firing rates based on given set of future states
-    Z = zeros(0);
-    for i in 1:(length(optimization_states) - control_horizon)
-        z = y_to_z(C*optimization_states[i][1]);
-        append!(Z, z);
-    end
+    # Z = zeros(0);
+    # for i in 1:(length(optimization_states) - control_horizon)
+    #     z = y_to_z(C*optimization_states[i][1]);
+    #     append!(Z, z);
+    # end
+    Z = y_to_z(C*optimization_states[1:])
  
     #get errors by calling errors function and giving it the results of the reference function
     z_current = Z[1];
@@ -93,7 +93,7 @@ function J(C, y_to_z, reference, errors, u_penalty, control_horizon, prediction_
 end
 
 #Here are some trial values
-control_horizon = 2;
+control_horizon = 3;
 prediction_horizon = 3;
 error_weights = [1 for i in 1:prediction_horizon];
 du_weights = [0 for i in 1:control_horizon];
@@ -102,16 +102,18 @@ x_current = [-1.548; 2.18; .806; -1.53];
 
 #make vectors for use in constraint function - optimization_states includes all x's followed by inputs
 #setting all values to zero as this is a convenient initial guess (for the solver to use) that satisfies the constraints
-optimization_states = [0 for _ in 1:(prediction_horizon*4 + control_horizon)] 
-lngth = length(optimization_states)
+lngth = prediction_horizon*4 + control_horizon
+# optimization_states = [0 for _ in 1:(prediction_horizon*4 + control_horizon)] 
+# lngth = length(optimization_states)
+optimization_states= zeros(lngth)
 
 #function to get state values from t to t + prediction_horizon - 1 and then apply x = Ax + Bu to them
 function X_behind(optimization_states)
     X_behind = [[] for _ in 1:(prediction_horizon-1)]
     for i in 1:(prediction_horizon-1)     
         states = zeros(0);
-        for i in 4*(i-1)+1:4*(i-1)+4
-            append!(states, optimization_states[i])
+        for j in 4*(i-1)+1:4*(i-1)+4
+            append!(states, optimization_states[j])
         end                                 
         push!(X_behind[i], A*states + B .* optimization_states[prediction_horizon*4 + i])
     end
@@ -125,8 +127,8 @@ function X_atm(optimization_states)
     for i in 2:(prediction_horizon)     
         states = zeros(0);
         #gather all parts of this state vector
-        for i in 4*(i-1)+1:4*(i-1)+4
-            append!(states, optimization_states[i])
+        for j in 4*(i-1)+1:4*(i-1)+4
+            append!(states, optimization_states[j])
         end                                 
         push!(X_atm[i-1], states)
     end
@@ -136,13 +138,13 @@ end
 
 #now try to use with optimization package
 #simpler version of J to use with specific values already passed
-f(optimization_states) = J(C, y_to_z, reference, errors, u_penalty, control_horizon, prediction_horizon, optimization_states, u_current, error_weights, du_weights);
+f(optimization_states, p) = J(C, y_to_z, reference, errors, u_penalty, control_horizon, prediction_horizon, optimization_states, u_current, error_weights, du_weights);
 
 #constraint - takes above functions and takes their difference which must be zero
 cons(optimization_states) = X_atm(optimization_states) - X_behind(optimization_states)
 
 #not sure if this has arguments or not
-opt_fun = OptimizationFunction(f, cons=cons)
+opt_fun = OptimizationFunction(f, Optimization.AutoForwardDiff(), cons=cons)
 
 #define lcons to match vector difference returned by constraint
 lcons = [Vector{Float64}[] for _ in 1:(prediction_horizon-1)] #specifying Float type for matching with state differences later
@@ -164,9 +166,9 @@ for i in 1:control_horizon
     push!(ub, 70)
 end
 
-prob = OptimizationProblem(opt_fun, initial_state, lb=lb, ub=ub, lcons=lcons, ucons=ucons)
+prob = OptimizationProblem(opt_fun, initial_state, lcons=lcons, ucons=ucons)
 
-sol = solve(prob,BBO_adaptive_de_rand_1_bin_radiuslimited());
+sol = solve(prob, Optim.Newton());
 
 
 
