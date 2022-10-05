@@ -24,7 +24,14 @@ end
 unpack_u(u) = [reshape(u[1:4*T], (4, T)), reshape(u[1+end-T:end], (1, T))]
 XU_to_u(X, U) = reduce(vcat, [X[:], U[:]])
 
-u0 = XU_to_u(zeros(4, T), zeros(1, T))
+begin
+    U0 = zeros(1, T)
+    X0 = zeros(4, T)
+    for t in 2:T
+        X0[:, t] = A*X0[:, t-1]
+    end
+    u0 = XU_to_u(X0, U0)
+end
 
 function J(u, p)
     X, U = unpack_u(u)
@@ -36,8 +43,9 @@ function cons(u, p)
     X, U = unpack_u(u)
     x0 = p[2]
     return reduce(vcat, [
-        (X[:, 1] - x0)[:],
-        (X[:, 2:end] - (A*X[:, 1:end-1] + B*U[:, 1:end-1]))[:]  # to vector
+        (X[:, 1] - x0),
+        (X[:, 2:end] - (A*X[:, 1:end-1] + B*U[:, 1:end-1]))[:],  # to vector
+        U[:],
     ])
 end 
 optf = OptimizationFunction(J, Optimization.AutoForwardDiff(), cons=cons)
@@ -56,22 +64,30 @@ function u0p_from_prev(u, xref, uref)
 end
 
 solu = u0
-N = 3
+N = 10
 Z = zeros(1, N)
 U = zeros(1, N)
+lcons = XU_to_u(zeros(4, T), zeros(1, T))
+ucons = XU_to_u(zeros(4, T), fill(70, 1, T))
 for t in 1:N
     yref = (log(zref(t)) + 5.468)/61.4
     uref = inv(C*inv(I-A)*B) * yd
     xref = inv(I-A) * B * ud
-    u0, p = u0p_from_prev(solu, xref, uref)
+    # println(xref)
+    local u0, p = u0p_from_prev(solu, xref, uref)
     # println(u0[end-T+3])
 
-    prob = OptimizationProblem(optf, u0, p, lcons=zeros(5*T), ucons=zeros(5*T))
-    sol = solve(prob, BFGS())
-    println(optf.cons(sol.u, p))
+    prob = OptimizationProblem(optf, u0, p, lcons=lcons, ucons=ucons)
+    # prob = OptimizationProblem(optf, u0, p, lcons=zeros(5*T), ucons=zeros(5*T))
+    sol = solve(prob, Newton())
+    # println(u0[end-T+1:end])
+    # println(sol.u[end-T+1:end])
+    # println(optf.cons(sol.u, p))
+    println(sol.original)
 
     Z[1, t] = y_to_z(C*p[2])  # p[2] is x0
-    U[1, t] = sol.u[end-T+1]
+    global solu = sol.u
+    U[1, t] = solu[end-T+1]
 end
 
 
