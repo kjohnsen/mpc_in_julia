@@ -1,6 +1,7 @@
 
 using LinearAlgebra
 using Optimization, OptimizationOptimJL, ForwardDiff
+using OptimizationNLopt
 
 #define system
 A = [1 -6.66e-13 -2.03e-9 -4.14e-6;
@@ -31,6 +32,7 @@ begin
         X0[:, t] = A*X0[:, t-1]
     end
     u0 = XU_to_u(X0, U0)
+    p = [X0[:, 1], X0[:, 1]]
 end
 
 function J(u, p)
@@ -39,14 +41,18 @@ function J(u, p)
     X̃ = X .- xref
     return sum((Q*X̃).*X̃) + sum((R*U).*U)
 end
-function cons(u, p)
+function cons(res, u, p)
     X, U = unpack_u(u)
-    x0 = p[2]
-    return reduce(vcat, [
+    x0 = p[2]  # x0
+    # is automatically init'd with same shape as lcons/ucons
+    res .= reduce(vcat, [
         (X[:, 1] - x0),
         (X[:, 2:end] - (A*X[:, 1:end-1] + B*U[:, 1:end-1]))[:],  # to vector
-        U[:],
+        # U[:],
     ])
+    res .= 0.
+    # println("cons res: ", res)
+    "garbage"
 end 
 optf = OptimizationFunction(J, Optimization.AutoForwardDiff(), cons=cons)
 
@@ -63,27 +69,29 @@ function u0p_from_prev(u, xref, uref)
     return XU_to_u(newX, newU), [xref, newX[:, 1]]
 end
 
-solu = u0
 N = 10
 Z = zeros(1, N)
 U = zeros(1, N)
 lcons = XU_to_u(zeros(4, T), zeros(1, T))
 ucons = XU_to_u(zeros(4, T), fill(70, 1, T))
+lucons = zeros(4*T)
+
+solu = u0
 for t in 1:N
     yref = (log(zref(t)) + 5.468)/61.4
-    uref = inv(C*inv(I-A)*B) * yd
-    xref = inv(I-A) * B * ud
-    # println(xref)
+    uref = inv(C*inv(I-A)*B) * yref
+    xref = inv(I-A) * B * uref
     local u0, p = u0p_from_prev(solu, xref, uref)
-    # println(u0[end-T+3])
+    # println("cons")
+    # res = zero(lucons)
+    # optf.cons(res, u0, p)
+    # println(res)
 
-    prob = OptimizationProblem(optf, u0, p, lcons=lcons, ucons=ucons)
-    # prob = OptimizationProblem(optf, u0, p, lcons=zeros(5*T), ucons=zeros(5*T))
-    sol = solve(prob, Newton())
-    # println(u0[end-T+1:end])
-    # println(sol.u[end-T+1:end])
-    # println(optf.cons(sol.u, p))
-    println(sol.original)
+    # prob = OptimizationProblem(optf, u0, p, lcons=lcons, ucons=ucons)
+    prob = OptimizationProblem(optf, u0, p, lcons=lucons, ucons=lucons)
+    local sol = solve(prob, IPNewton(), maxiters=1)
+    println("u plan")
+    println(solu[end-T+1:end])
 
     Z[1, t] = y_to_z(C*p[2])  # p[2] is x0
     global solu = sol.u
